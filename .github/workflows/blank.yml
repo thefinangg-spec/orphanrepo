@@ -1,36 +1,212 @@
-# This is a basic workflow to help you get started with Actions
+name: YouTube Downloader
 
-name: fRDP
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      youtube_url:
+        description: 'YouTube URL to download'
+        required: true
+        type: string
+        placeholder: 'https://www.youtube.com/watch?v=...'
+      
+      download_type:
+        description: 'Download type (video or audio)'
+        required: true
+        type: choice
+        default: 'video'
+        options:
+          - video
+          - audio
+      
+      quality:
+        description: 'Video quality (best, 1080, 720, 480, worst)'
+        required: false
+        type: string
+        default: 'best'
+      
+      folder_name:
+        description: 'Optional subfolder name inside videoz/audioz (leave empty for root)'
+        required: false
+        type: string
+        default: ''
+      
+      cookies:
+        description: 'Paste cookies from browser extension (for private/member-only videos)'
+        required: false
+        type: string
+        default: ''
+        placeholder: '# Netscape HTTP Cookie File...'
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  download:
     runs-on: ubuntu-latest
-
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    timeout-minutes: 60
+    
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        # Update package list
+        sudo apt-get update
+        
+        # Install Python3 and pip
+        sudo apt-get install -y python3 python3-pip
+        
+        # Install Node.js and npm
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        
+        # Install ffmpeg and other required tools
+        sudo apt-get install -y ffmpeg aria2
+        sudo apt-get install -y atomicparsley  # For thumbnail embedding
+        
+        # Install yt-dlp
+        sudo pip3 install -U yt-dlp
+        
+        # Verify installations
+        yt-dlp --version
+        ffmpeg -version
+        node --version
+    
+    - name: Set up cookies file
+      if: ${{ github.event.inputs.cookies != '' }}
+      run: |
+        # Create cookies file from input
+        echo "${{ github.event.inputs.cookies }}" > cookies.txt
+        
+        # Remove any Windows line endings
+        sed -i 's/\r$//' cookies.txt
+        
+        # Verify cookies file has content
+        if [ -s cookies.txt ]; then
+          echo "Cookies file created successfully"
+          wc -l cookies.txt
+        else
+          echo "Warning: Cookies file is empty"
+        fi
+    
+    - name: Create directories
+      run: |
+        # Create main directories
+        mkdir -p videoz
+        mkdir -p audioz
+        
+        # Create subdirectory if folder name provided
+        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
+          if [ "${{ github.event.inputs.download_type }}" = "video" ]; then
+            mkdir -p "videoz/${{ github.event.inputs.folder_name }}"
+            echo "Created folder: videoz/${{ github.event.inputs.folder_name }}"
+          else
+            mkdir -p "audioz/${{ github.event.inputs.folder_name }}"
+            echo "Created folder: audioz/${{ github.event.inputs.folder_name }}"
+          fi
+        fi
+    
+    - name: Download video
+      if: ${{ github.event.inputs.download_type == 'video' }}
+      run: |
+        # Build output path
+        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
+          OUTPUT_PATH="videoz/${{ github.event.inputs.folder_name }}/%(title)s.%(ext)s"
+        else
+          OUTPUT_PATH="videoz/%(title)s.%(ext)s"
+        fi
+        
+        # Build yt-dlp command
+        CMD="yt-dlp \
+          --output \"$OUTPUT_PATH\" \
+          --format \"${{ github.event.inputs.quality }}+bestaudio/best\" \
+          --merge-output-format mp4 \
+          --embed-thumbnail \
+          --embed-metadata \
+          --add-metadata"
+        
+        # Add cookies if provided
+        if [ -f cookies.txt ]; then
+          CMD="$CMD --cookies cookies.txt"
+        fi
+        
+        # Add URL
+        CMD="$CMD \"${{ github.event.inputs.youtube_url }}\""
+        
+        # Execute
+        echo "Downloading video..."
+        eval $CMD
+        
+        echo "Download completed successfully!"
+    
+    - name: Download audio
+      if: ${{ github.event.inputs.download_type == 'audio' }}
+      run: |
+        # Build output path
+        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
+          OUTPUT_PATH="audioz/${{ github.event.inputs.folder_name }}/%(title)s.%(ext)s"
+        else
+          OUTPUT_PATH="audioz/%(title)s.%(ext)s"
+        fi
+        
+        # Build yt-dlp command
+        CMD="yt-dlp \
+          --output \"$OUTPUT_PATH\" \
+          --format \"bestaudio/best\" \
+          --extract-audio \
+          --audio-format mp3 \
+          --audio-quality 0 \
+          --embed-thumbnail \
+          --embed-metadata \
+          --add-metadata"
+        
+        # Add cookies if provided
+        if [ -f cookies.txt ]; then
+          CMD="$CMD --cookies cookies.txt"
+        fi
+        
+        # Add URL
+        CMD="$CMD \"${{ github.event.inputs.youtube_url }}\""
+        
+        # Execute
+        echo "Downloading audio..."
+        eval $CMD
+        
+        echo "Download completed successfully!"
+    
+    - name: List downloaded files
+      run: |
+        echo "=== Downloaded files ==="
+        
+        if [ "${{ github.event.inputs.download_type }}" = "video" ]; then
+          if [ -n "${{ github.event.inputs.folder_name }}" ]; then
+            ls -la "videoz/${{ github.event.inputs.folder_name }}/" || echo "No files found"
+            echo "Files in videoz/${{ github.event.inputs.folder_name }}/"
+          else
+            ls -la videoz/ || echo "No files found"
+            echo "Files in videoz/"
+          fi
+        else
+          if [ -n "${{ github.event.inputs.folder_name }}" ]; then
+            ls -la "audioz/${{ github.event.inputs.folder_name }}/" || echo "No files found"
+            echo "Files in audioz/${{ github.event.inputs.folder_name }}/"
+          else
+            ls -la audioz/ || echo "No files found"
+            echo "Files in audioz/"
+          fi
+        fi
+    
+    - name: Upload downloaded file as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: downloaded-content
+        path: |
+          videoz/
+          audioz/
+        retention-days: 7
+        if-no-files-found: warn
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Salam, Donya
-
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
-        run: |
-          echo Add other Salam Donya
-          echo test, and deploy your Salam Donya project.
+    - name: Clean up
+      if: always()
+      run: |
+        # Remove cookies file for security
+        rm -f cookies.txt
+        echo "Cleanup completed"
