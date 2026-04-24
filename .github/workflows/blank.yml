@@ -1,119 +1,49 @@
-name: YouTube Downloader
+name: YouTube Downloader (No Cookies - Android Workaround)
 
 on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: 'YouTube URL to download'
+        description: 'YouTube URL'
         required: true
         type: string
-        placeholder: 'https://www.youtube.com/watch?v=...'
-      
       download_type:
-        description: 'Download type (video or audio)'
+        description: 'Video or audio'
         required: true
         type: choice
-        default: 'video'
         options:
           - video
           - audio
-      
-      quality:
-        description: 'Video quality (best, 1080, 720, 480, worst)'
-        required: false
-        type: string
-        default: 'best'
-      
-      folder_name:
-        description: 'Optional subfolder name (leave empty for root)'
-        required: false
-        type: string
-        default: ''
 
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     
     steps:
-    - name: Install yt-dlp and ffmpeg
+    - name: Install yt-dlp
       run: |
         sudo apt-get update
         sudo apt-get install -y ffmpeg
-        sudo pip3 install yt-dlp
-        yt-dlp --version
+        pip install yt-dlp
     
-    - name: Create folders
+    - name: Download using Android client (avoids bot check)
       run: |
-        mkdir -p videoz audioz
-        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
-          if [ "${{ github.event.inputs.download_type }}" = "video" ]; then
-            mkdir -p "videoz/${{ github.event.inputs.folder_name }}"
-          else
-            mkdir -p "audioz/${{ github.event.inputs.folder_name }}"
-          fi
-        fi
-    
-    - name: Download video
-      if: ${{ github.event.inputs.download_type == 'video' }}
-      run: |
-        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
-          cd "videoz/${{ github.event.inputs.folder_name }}"
-        else
-          cd videoz
-        fi
+        mkdir -p download
+        cd download
         
-        yt-dlp \
-          -f "${{ github.event.inputs.quality }}+bestaudio/best" \
-          --merge-output-format mp4 \
-          --embed-thumbnail \
-          "${{ github.event.inputs.youtube_url }}"
-        
-        echo "✅ Video downloaded successfully!"
-    
-    - name: Download audio
-      if: ${{ github.event.inputs.download_type == 'audio' }}
-      run: |
-        if [ -n "${{ github.event.inputs.folder_name }}" ]; then
-          cd "audioz/${{ github.event.inputs.folder_name }}"
-        else
-          cd audioz
-        fi
-        
-        yt-dlp \
-          -f bestaudio/best \
-          --extract-audio \
-          --audio-format mp3 \
-          --audio-quality 0 \
-          --embed-thumbnail \
-          "${{ github.event.inputs.youtube_url }}"
-        
-        echo "✅ Audio downloaded successfully!"
-    
-    - name: List downloaded files
-      run: |
-        echo "📁 Downloaded files:"
-        echo "==================="
+        CMD="yt-dlp --extractor-args youtube:player_client=android "
         
         if [ "${{ github.event.inputs.download_type }}" = "video" ]; then
-          if [ -n "${{ github.event.inputs.folder_name }}" ]; then
-            ls -la "videoz/${{ github.event.inputs.folder_name }}/"
-          else
-            ls -la videoz/
-          fi
+          CMD="$CMD -f \"bestvideo+bestaudio\" --merge-output-format mp4"
         else
-          if [ -n "${{ github.event.inputs.folder_name }}" ]; then
-            ls -la "audioz/${{ github.event.inputs.folder_name }}/"
-          else
-            ls -la audioz/
-          fi
+          CMD="$CMD -x --audio-format mp3"
         fi
+        
+        CMD="$CMD \"${{ github.event.inputs.youtube_url }}\""
+        eval $CMD
     
-    - name: Upload to GitHub
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: download-${{ github.run_id }}
-        path: |
-          videoz/
-          audioz/
-        retention-days: 7
+        name: download
+        path: download/
